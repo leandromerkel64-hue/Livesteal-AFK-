@@ -1,21 +1,21 @@
 {
-  "name": "LiveSteal AFK",
+  "name": "Server-Bot",
   "bot-account": {
-    "username": "Livesteal AFK",
+    "username": "Livesteal-Bot",
     "password": "",
-    "type": "offline"
+    "type": "online"
   },
   "server": {
-    "ip": " Livesteal01.aternos.me",
+    "ip": " Livesteal01.aternos.me:28816",
     "port": 28816,
     "version": "",
-    "try-creative": false
+    "try-creative": true
   },
   "position": {
     "enabled": true,
-    "x": 0,
-    "y": 100,
-    "z": 0
+    "x": -1100,
+    "y": 66,
+    "z": -466
   },
   "utils": {
     "auto-auth": {
