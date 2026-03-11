@@ -1,13 +1,13 @@
 {
-  "name": "AFK Bot",
+  "name": "LiveSteal AFK",
   "bot-account": {
-    "username": "imgonnacream",
+    "username": "Livesteal AFK",
     "password": "",
     "type": "offline"
   },
   "server": {
-    "ip": "sigmarizz111.aternos.me",
-    "port": 45899,
+    "ip": " LivestealSMP000.aternos.me",
+    "port": 28816,
     "version": "",
     "try-creative": false
   },
