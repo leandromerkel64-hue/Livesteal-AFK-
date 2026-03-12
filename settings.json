@@ -6,9 +6,9 @@
     "type": "online"
   },
   "server": {
-    "ip": " Livesteal01.aternos.me",
+    "ip": " LivesteaL01.aternos.me",
     "port": 28816,
-    "version": "",
+    "version": "1.21.8",
     "try-creative": true
   },
   "position": {
