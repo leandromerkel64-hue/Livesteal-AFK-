@@ -5,8 +5,7 @@ const { Movements, pathfinder, goals } = require('mineflayer-pathfinder');
 const { GoalBlock } = goals;
 const config = require('./settings.json');
 const express = require('express');
-const http = require('http');
-const https = require('https');
+const { getProtocol, randInt, randDelay } = require('./utils');
 
 // ============================================================
 // EXPRESS SERVER - Keep Render/Aternos alive
@@ -352,7 +351,7 @@ function startSelfPing() {
     return;
   }
   setInterval(() => {
-    const protocol = renderUrl.startsWith('https') ? https : http;
+    const protocol = getProtocol(renderUrl);
     protocol.get(`${renderUrl}/ping`, (res) => {
       // Silent success
     }).on('error', (err) => {
@@ -412,10 +411,34 @@ function addInterval(callback, delay) {
   return id;
 }
 
+// ============================================================
+// BOT STATE HELPERS - shared guards used across all modules
+// ============================================================
+function botReady() {
+  return Boolean(bot && botState.connected);
+}
+
+function botCanControl() {
+  return botReady() && typeof bot.setControlState === 'function';
+}
+
+// Briefly hold a control state, then release it (movement/anti-afk pulses).
+function pulseControl(control, duration) {
+  if (typeof bot.setControlState !== 'function') return;
+  bot.setControlState(control, true);
+  setTimeout(() => {
+    if (bot && typeof bot.setControlState === 'function') bot.setControlState(control, false);
+  }, duration);
+}
+
+function isDiscordEvent(event) {
+  return Boolean(config.discord && config.discord.events && config.discord.events[event]);
+}
+
 function getReconnectDelay() {
   if (botState.wasThrottled) {
     botState.wasThrottled = false;
-    const throttleDelay = 60000 + Math.floor(Math.random() * 60000);
+    const throttleDelay = randDelay(60000, 60000);
     console.log(`[Bot] Throttle detected - using extended delay: ${throttleDelay / 1000}s`);
     return throttleDelay;
   }
@@ -424,7 +447,7 @@ function getReconnectDelay() {
   const baseDelay = config.utils['auto-reconnect-delay'] || 3000;
   const maxDelay = config.utils['max-reconnect-delay'] || 30000;
   const delay = Math.min(baseDelay * Math.pow(2, botState.reconnectAttempts), maxDelay);
-  const jitter = Math.floor(Math.random() * 2000);
+  const jitter = randInt(2000);
   return delay + jitter;
 }
 
@@ -494,7 +517,7 @@ function createBot() {
       isReconnecting = false;
 
       console.log(`[Bot] [+] Successfully spawned on server! (Version: ${bot.version})`);
-      if (config.discord && config.discord.events && config.discord.events.connect) {
+      if (isDiscordEvent('connect')) {
         sendDiscordWebhook(`[+] **Connected** to \`${config.server.ip}\``, 0x4ade80);
       }
 
@@ -510,7 +533,7 @@ function createBot() {
 
       // Attempt creative mode (only works if bot has OP and enabled in settings)
       setTimeout(() => {
-        if (bot && botState.connected && config.server['try-creative']) {
+        if (botReady() && config.server['try-creative']) {
           bot.chat('/gamemode creative');
           console.log('[INFO] Attempted to set creative mode (requires OP)');
         }
@@ -542,7 +565,7 @@ function createBot() {
         botState.wasThrottled = true;
       }
 
-      if (config.discord && config.discord.events && config.discord.events.disconnect) {
+      if (isDiscordEvent('disconnect')) {
         sendDiscordWebhook(`[!] **Kicked**: ${kickReason}`, 0xff0000);
       }
       // NOTE: do NOT call scheduleReconnect() here - 'end' will fire right after 'kicked' and handle it
@@ -555,7 +578,7 @@ function createBot() {
       clearAllIntervals();
       spawnHandled = false; // reset for next connection
 
-      if (config.discord && config.discord.events && config.discord.events.disconnect && reason !== 'Periodic Rejoin') {
+      if (isDiscordEvent('disconnect') && reason !== 'Periodic Rejoin') {
         sendDiscordWebhook(`[-] **Disconnected**: ${reason || 'Unknown'}`, 0xf87171);
       }
 
@@ -611,7 +634,7 @@ function initializeModules(bot, mcData, defaultMove) {
     let authHandled = false;
 
     const tryAuth = (type) => {
-      if (authHandled || !bot || !botState.connected) return;
+      if (authHandled || !botReady()) return;
       authHandled = true;
       if (type === 'register') {
         bot.chat(`/register ${password} ${password}`);
@@ -634,7 +657,7 @@ function initializeModules(bot, mcData, defaultMove) {
 
     // Failsafe: if no prompt after 10s, try login anyway
     setTimeout(() => {
-      if (!authHandled && bot && botState.connected) {
+      if (!authHandled && botReady()) {
         console.log('[Auth] No prompt detected after 10s, sending /login as failsafe');
         bot.chat(`/login ${password}`);
         authHandled = true;
@@ -648,7 +671,7 @@ function initializeModules(bot, mcData, defaultMove) {
     if (config.utils['chat-messages'].repeat) {
       let i = 0;
       addInterval(() => {
-        if (bot && botState.connected) {
+        if (botReady()) {
           bot.chat(messages[i]);
           botState.lastActivity = Date.now();
           i = (i + 1) % messages.length;
@@ -656,7 +679,7 @@ function initializeModules(bot, mcData, defaultMove) {
       }, config.utils['chat-messages']['repeat-delay'] * 1000);
     } else {
       messages.forEach((msg, idx) => {
-        setTimeout(() => { if (bot && botState.connected) bot.chat(msg); }, idx * 1000);
+        setTimeout(() => { if (botReady()) bot.chat(msg); }, idx * 1000);
       });
     }
   }
@@ -673,24 +696,24 @@ function initializeModules(bot, mcData, defaultMove) {
   if (config.utils['anti-afk'] && config.utils['anti-afk'].enabled) {
     // Arm swinging
     addInterval(() => {
-      if (!bot || !botState.connected) return;
+      if (!botReady()) return;
       try { bot.swingArm(); } catch (e) { }
-    }, 10000 + Math.floor(Math.random() * 50000));
+    }, randDelay(10000, 50000));
 
     // Hotbar cycling
     addInterval(() => {
-      if (!bot || !botState.connected) return;
+      if (!botReady()) return;
       try {
-        const slot = Math.floor(Math.random() * 9);
+        const slot = randInt(9);
         bot.setQuickBarSlot(slot);
       } catch (e) { }
-    }, 30000 + Math.floor(Math.random() * 90000));
+    }, randDelay(30000, 90000));
 
     // Teabagging
     addInterval(() => {
-      if (!bot || !botState.connected || typeof bot.setControlState !== 'function') return;
+      if (!botCanControl()) return;
       if (Math.random() > 0.9) {
-        let count = 2 + Math.floor(Math.random() * 4);
+        let count = 2 + randInt(4);
         const doTeabag = () => {
           if (count <= 0 || !bot || typeof bot.setControlState !== 'function') return;
           try {
@@ -704,24 +727,21 @@ function initializeModules(bot, mcData, defaultMove) {
         };
         doTeabag();
       }
-    }, 120000 + Math.floor(Math.random() * 180000));
+    }, randDelay(120000, 180000));
 
     // FIX: micro-walk only when circle-walk is NOT running, to avoid interrupting pathfinder
     if (!(config.movement && config.movement['circle-walk'] && config.movement['circle-walk'].enabled)) {
       addInterval(() => {
-        if (!bot || !botState.connected || typeof bot.setControlState !== 'function') return;
+        if (!botCanControl()) return;
         try {
           const yaw = Math.random() * Math.PI * 2;
           bot.look(yaw, 0, true);
-          bot.setControlState('forward', true);
-          setTimeout(() => {
-            if (bot && typeof bot.setControlState === 'function') bot.setControlState('forward', false);
-          }, 500 + Math.floor(Math.random() * 1500));
+          pulseControl('forward', randDelay(500, 1500));
           botState.lastActivity = Date.now();
         } catch (e) {
           console.log('[AntiAFK] Walk error:', e.message);
         }
-      }, 120000 + Math.floor(Math.random() * 360000));
+      }, randDelay(120000, 360000));
     }
 
     if (config.utils['anti-afk'].sneak) {
@@ -775,7 +795,7 @@ function startCircleWalk(bot, defaultMove) {
   let lastPathTime = 0;
 
   addInterval(() => {
-    if (!bot || !botState.connected) return;
+    if (!botReady()) return;
     const now = Date.now();
     if (now - lastPathTime < 2000) return;
     lastPathTime = now;
@@ -794,12 +814,9 @@ function startCircleWalk(bot, defaultMove) {
 
 function startRandomJump(bot) {
   addInterval(() => {
-    if (!bot || !botState.connected || typeof bot.setControlState !== 'function') return;
+    if (!botCanControl()) return;
     try {
-      bot.setControlState('jump', true);
-      setTimeout(() => {
-        if (bot && typeof bot.setControlState === 'function') bot.setControlState('jump', false);
-      }, 300);
+      pulseControl('jump', 300);
       botState.lastActivity = Date.now();
     } catch (e) {
       console.log('[RandomJump] Error:', e.message);
@@ -809,7 +826,7 @@ function startRandomJump(bot) {
 
 function startLookAround(bot) {
   addInterval(() => {
-    if (!bot || !botState.connected) return;
+    if (!botReady()) return;
     try {
       const yaw = (Math.random() * Math.PI * 2) - Math.PI;
       const pitch = (Math.random() * Math.PI / 2) - Math.PI / 4;
@@ -830,7 +847,7 @@ function startLookAround(bot) {
 function avoidMobs(bot) {
   const safeDistance = 5;
   addInterval(() => {
-    if (!bot || !botState.connected || typeof bot.setControlState !== 'function') return;
+    if (!botCanControl()) return;
     try {
       const entities = Object.values(bot.entities).filter(e =>
         e.type === 'mob' || (e.type === 'player' && e.username !== bot.username)
@@ -839,10 +856,7 @@ function avoidMobs(bot) {
         if (!e.position) continue;
         const distance = bot.entity.position.distanceTo(e.position);
         if (distance < safeDistance) {
-          bot.setControlState('back', true);
-          setTimeout(() => {
-            if (bot && typeof bot.setControlState === 'function') bot.setControlState('back', false);
-          }, 500);
+          pulseControl('back', 500);
           break;
         }
       }
@@ -863,7 +877,7 @@ function combatModule(bot, mcData) {
 
   // FIX: use physicsTick (not the deprecated physicTick)
   bot.on('physicsTick', () => {
-    if (!bot || !botState.connected) return;
+    if (!botReady()) return;
     if (!config.combat['attack-mobs']) return;
 
     const now = Date.now();
@@ -924,7 +938,7 @@ function bedModule(bot, mcData) {
   let isTryingToSleep = false;
 
   addInterval(async () => {
-    if (!bot || !botState.connected) return;
+    if (!botReady()) return;
     if (!config.beds['place-night']) return; // FIX: check flag (was always skipping before)
 
     try {
@@ -964,7 +978,7 @@ function chatModule(bot) {
 
     try {
       // FIX: send chat events to Discord if enabled
-      if (config.discord && config.discord.enabled && config.discord.events && config.discord.events.chat) {
+      if (config.discord && config.discord.enabled && isDiscordEvent('chat')) {
         sendDiscordWebhook(`💬 **${username}**: ${message}`, 0x7289da);
       }
 
@@ -995,7 +1009,7 @@ const rl = readline.createInterface({
 });
 
 rl.on('line', (line) => {
-  if (!bot || !botState.connected) {
+  if (!botReady()) {
     console.log('[Console] Bot not connected');
     return;
   }
@@ -1031,7 +1045,7 @@ function sendDiscordWebhook(content, color = 0x0099ff) {
   }
   lastDiscordSend = now;
 
-  const protocol = config.discord.webhookUrl.startsWith('https') ? https : http;
+  const protocol = getProtocol(config.discord.webhookUrl);
   const urlParts = new URL(config.discord.webhookUrl);
 
   const payload = JSON.stringify({
