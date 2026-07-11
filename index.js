@@ -1147,8 +1147,12 @@ function sendDiscordWebhook(content, color = 0x0099ff) {
   req.setTimeout(10000, () => {
     req.destroy(new Error('Webhook request timed out after 10 seconds'));
   });
-  req.write(payload);
-  req.end();
+  try {
+    req.end(payload);
+  } catch (error) {
+    reportError('Discord', error, 'discord-webhook');
+    req.destroy();
+  }
 }
 
 // ============================================================
@@ -1170,24 +1174,27 @@ process.on('uncaughtException', (err) => {
     return;
   }
 
-  if (config.utils['auto-reconnect']) {
-    clearAllIntervals();
-    botState.connected = false;
-
-    // FIX: reset isReconnecting if it was stuck, then schedule reconnect
-    if (isReconnecting) {
-      console.log('[FATAL] isReconnecting was stuck - resetting before crash recovery');
-      isReconnecting = false;
-      if (reconnectTimeoutId) {
-        clearTimeout(reconnectTimeoutId);
-        reconnectTimeoutId = null;
-      }
-    }
-
-    setTimeout(() => {
-      scheduleReconnect();
-    }, isNetworkError ? 5000 : 10000);
+  if (!config.utils['auto-reconnect']) {
+    shutdown(1);
+    return;
   }
+
+  clearAllIntervals();
+  botState.connected = false;
+
+  // FIX: reset isReconnecting if it was stuck, then schedule reconnect
+  if (isReconnecting) {
+    console.log('[FATAL] isReconnecting was stuck - resetting before crash recovery');
+    isReconnecting = false;
+    if (reconnectTimeoutId) {
+      clearTimeout(reconnectTimeoutId);
+      reconnectTimeoutId = null;
+    }
+  }
+
+  setTimeout(() => {
+    scheduleReconnect();
+  }, 5000);
 });
 
 process.on('unhandledRejection', (reason) => {
