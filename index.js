@@ -12,7 +12,7 @@ const https = require('https');
 // EXPRESS SERVER - Keep Render/Aternos alive
 // ============================================================
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 5000;
 
 // Bot state tracking
 let botState = {
@@ -23,6 +23,34 @@ let botState = {
   errors: [],
   wasThrottled: false
 };
+
+const MAX_RECORDED_ERRORS = 100;
+
+function formatError(error) {
+  if (error instanceof Error) return error.stack || error.message;
+  if (typeof error === 'string') return error;
+
+  try {
+    const serialized = JSON.stringify(error);
+    return serialized === undefined ? String(error) : serialized;
+  } catch {
+    return String(error);
+  }
+}
+
+function recordError(type, message) {
+  botState.errors.push({ type, message, time: Date.now() });
+
+  if (botState.errors.length > MAX_RECORDED_ERRORS) {
+    botState.errors.shift();
+  }
+}
+
+function reportError(source, error, type = 'runtime') {
+  const message = formatError(error);
+  console.error(`[${source}] ${message}`);
+  recordError(type, message);
+}
 
 // Health check endpoint for monitoring
 app.get('/', (req, res) => {
@@ -321,13 +349,16 @@ app.get('/ping', (req, res) => res.send('pong'));
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`[Server] HTTP server started on port ${server.address().port} `);
 });
+let triedFallbackPort = false;
 server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
+  if (err.code === 'EADDRINUSE' && !triedFallbackPort) {
+    triedFallbackPort = true;
     const fallbackPort = PORT + 1;
     console.log(`[Server] Port ${PORT} in use - trying port ${fallbackPort} `);
     server.listen(fallbackPort, '0.0.0.0');
   } else {
-    console.log(`[Server] HTTP server error: ${err.message} `);
+    reportError('Server', err, 'http-server');
+    setImmediate(() => shutdown(1));
   }
 });
 
@@ -352,12 +383,23 @@ function startSelfPing() {
     return;
   }
   setInterval(() => {
-    const protocol = renderUrl.startsWith('https') ? https : http;
-    protocol.get(`${renderUrl}/ping`, (res) => {
-      // Silent success
-    }).on('error', (err) => {
-      console.log(`[KeepAlive] Self-ping failed: ${err.message}`);
-    });
+    try {
+      const protocol = renderUrl.startsWith('https') ? https : http;
+      const request = protocol.get(`${renderUrl}/ping`, (res) => {
+        res.resume();
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reportError('KeepAlive', new Error(`Self-ping returned HTTP ${res.statusCode}`), 'self-ping');
+        }
+      });
+      request.setTimeout(10000, () => {
+        request.destroy(new Error('Self-ping timed out after 10 seconds'));
+      });
+      request.on('error', (err) => {
+        reportError('KeepAlive', err, 'self-ping');
+      });
+    } catch (error) {
+      reportError('KeepAlive', error, 'self-ping');
+    }
   }, SELF_PING_INTERVAL);
   console.log('[KeepAlive] Self-ping system started (every 10 min)');
 }
@@ -406,8 +448,17 @@ function clearAllIntervals() {
   activeIntervals = [];
 }
 
-function addInterval(callback, delay) {
-  const id = setInterval(callback, delay);
+function addInterval(callback, delay, source = 'Interval') {
+  const id = setInterval(() => {
+    try {
+      const result = callback();
+      if (result && typeof result.then === 'function') {
+        result.catch(err => reportError(source, err));
+      }
+    } catch (err) {
+      reportError(source, err);
+    }
+  }, delay);
   activeIntervals.push(id);
   return id;
 }
@@ -441,7 +492,7 @@ function createBot() {
       bot.removeAllListeners();
       bot.end();
     } catch (e) {
-      console.log('[Cleanup] Error ending previous bot:', e.message);
+      reportError('Cleanup', e);
     }
     bot = null;
   }
@@ -474,7 +525,9 @@ function createBot() {
         try {
           bot.removeAllListeners();
           bot.end();
-        } catch (e) { /* ignore */ }
+        } catch (e) {
+          reportError('Cleanup', e);
+        }
         bot = null;
         scheduleReconnect();
       }
@@ -533,7 +586,7 @@ function createBot() {
       const kickReason = typeof reason === 'object' ? JSON.stringify(reason) : reason;
       console.log(`[Bot] Kicked: ${kickReason}`);
       botState.connected = false;
-      botState.errors.push({ type: 'kicked', reason: kickReason, time: Date.now() });
+      recordError('kicked', kickReason);
       clearAllIntervals();
 
       const reasonStr = String(kickReason).toLowerCase();
@@ -565,14 +618,12 @@ function createBot() {
     });
 
     bot.on('error', (err) => {
-      const msg = err.message || '';
-      console.log(`[Bot] Error: ${msg}`);
-      botState.errors.push({ type: 'error', message: msg, time: Date.now() });
+      reportError('Bot', err, 'bot');
       // Don't reconnect on error - let 'end' event handle it
     });
 
   } catch (err) {
-    console.log(`[Bot] Failed to create bot: ${err.message}`);
+    reportError('Bot', err, 'bot-creation');
     scheduleReconnect();
   }
 }
@@ -674,8 +725,12 @@ function initializeModules(bot, mcData, defaultMove) {
     // Arm swinging
     addInterval(() => {
       if (!bot || !botState.connected) return;
-      try { bot.swingArm(); } catch (e) { }
-    }, 10000 + Math.floor(Math.random() * 50000));
+      try {
+        bot.swingArm();
+      } catch (e) {
+        reportError('AntiAFK Swing', e);
+      }
+    }, 10000 + Math.floor(Math.random() * 50000), 'AntiAFK Swing');
 
     // Hotbar cycling
     addInterval(() => {
@@ -683,8 +738,10 @@ function initializeModules(bot, mcData, defaultMove) {
       try {
         const slot = Math.floor(Math.random() * 9);
         bot.setQuickBarSlot(slot);
-      } catch (e) { }
-    }, 30000 + Math.floor(Math.random() * 90000));
+      } catch (e) {
+        reportError('AntiAFK Hotbar', e);
+      }
+    }, 30000 + Math.floor(Math.random() * 90000), 'AntiAFK Hotbar');
 
     // Teabagging
     addInterval(() => {
@@ -700,11 +757,13 @@ function initializeModules(bot, mcData, defaultMove) {
               count--;
               setTimeout(doTeabag, 150);
             }, 150);
-          } catch (e) { }
+          } catch (e) {
+            reportError('AntiAFK Sneak', e);
+          }
         };
         doTeabag();
       }
-    }, 120000 + Math.floor(Math.random() * 180000));
+    }, 120000 + Math.floor(Math.random() * 180000), 'AntiAFK Sneak');
 
     // FIX: micro-walk only when circle-walk is NOT running, to avoid interrupting pathfinder
     if (!(config.movement && config.movement['circle-walk'] && config.movement['circle-walk'].enabled)) {
@@ -719,7 +778,7 @@ function initializeModules(bot, mcData, defaultMove) {
           }, 500 + Math.floor(Math.random() * 1500));
           botState.lastActivity = Date.now();
         } catch (e) {
-          console.log('[AntiAFK] Walk error:', e.message);
+          reportError('AntiAFK Walk', e);
         }
       }, 120000 + Math.floor(Math.random() * 360000));
     }
@@ -727,7 +786,9 @@ function initializeModules(bot, mcData, defaultMove) {
     if (config.utils['anti-afk'].sneak) {
       try {
         if (typeof bot.setControlState === 'function') bot.setControlState('sneak', true);
-      } catch (e) { }
+      } catch (e) {
+        reportError('AntiAFK Sneak', e);
+      }
     }
   }
 
@@ -787,7 +848,7 @@ function startCircleWalk(bot, defaultMove) {
       angle += Math.PI / 4;
       botState.lastActivity = Date.now();
     } catch (e) {
-      console.log('[CircleWalk] Error:', e.message);
+      reportError('CircleWalk', e);
     }
   }, config.movement['circle-walk'].speed);
 }
@@ -802,7 +863,7 @@ function startRandomJump(bot) {
       }, 300);
       botState.lastActivity = Date.now();
     } catch (e) {
-      console.log('[RandomJump] Error:', e.message);
+      reportError('RandomJump', e);
     }
   }, config.movement['random-jump'].interval);
 }
@@ -813,12 +874,13 @@ function startLookAround(bot) {
     try {
       const yaw = (Math.random() * Math.PI * 2) - Math.PI;
       const pitch = (Math.random() * Math.PI / 2) - Math.PI / 4;
-      bot.look(yaw, pitch, false);
+      Promise.resolve(bot.look(yaw, pitch, false))
+        .catch(error => reportError('LookAround', error));
       botState.lastActivity = Date.now();
     } catch (e) {
-      console.log('[LookAround] Error:', e.message);
+      reportError('LookAround', e);
     }
-  }, config.movement['look-around'].interval);
+  }, config.movement['look-around'].interval, 'LookAround');
 }
 
 // ============================================================
@@ -847,7 +909,7 @@ function avoidMobs(bot) {
         }
       }
     } catch (e) {
-      console.log('[AvoidMobs] Error:', e.message);
+      reportError('AvoidMobs', e);
     }
   }, 2000);
 }
@@ -895,7 +957,7 @@ function combatModule(bot, mcData) {
         lastAttackTime = now;
       }
     } catch (e) {
-      console.log('[Combat] Error:', e.message);
+      reportError('Combat', e);
     }
   });
 
@@ -908,11 +970,11 @@ function combatModule(bot, mcData) {
         if (food) {
           bot.equip(food, 'hand')
             .then(() => bot.consume())
-            .catch(e => console.log('[AutoEat] Error:', e.message));
+            .catch(e => reportError('AutoEat', e));
         }
       }
     } catch (e) {
-      console.log('[AutoEat] Error:', e.message);
+      reportError('AutoEat', e);
     }
   });
 }
@@ -943,7 +1005,7 @@ function bedModule(bot, mcData) {
             await bot.sleep(bedBlock);
             console.log('[Bed] Sleeping...');
           } catch (e) {
-            // Can't sleep - maybe not night enough or monsters nearby
+            reportError('Bed', e);
           } finally {
             isTryingToSleep = false;
           }
@@ -951,9 +1013,9 @@ function bedModule(bot, mcData) {
       }
     } catch (e) {
       isTryingToSleep = false;
-      console.log('[Bed] Error:', e.message);
+      reportError('Bed', e);
     }
-  }, 10000);
+  }, 10000, 'Bed');
 }
 
 // Chat module
@@ -979,7 +1041,7 @@ function chatModule(bot) {
         }
       }
     } catch (e) {
-      console.log('[Chat] Error:', e.message);
+      reportError('Chat', e);
     }
   });
 }
@@ -1029,10 +1091,18 @@ function sendDiscordWebhook(content, color = 0x0099ff) {
     console.log('[Discord] Rate limited - skipping webhook');
     return;
   }
-  lastDiscordSend = now;
-
-  const protocol = config.discord.webhookUrl.startsWith('https') ? https : http;
-  const urlParts = new URL(config.discord.webhookUrl);
+  let urlParts;
+  try {
+    urlParts = new URL(config.discord.webhookUrl);
+  } catch (error) {
+    reportError('Discord', error, 'discord-webhook');
+    return;
+  }
+  if (urlParts.protocol !== 'http:' && urlParts.protocol !== 'https:') {
+    reportError('Discord', new Error(`Unsupported webhook protocol: ${urlParts.protocol}`), 'discord-webhook');
+    return;
+  }
+  const protocol = urlParts.protocol === 'https:' ? https : http;
 
   const payload = JSON.stringify({
     username: config.name,
@@ -1046,7 +1116,7 @@ function sendDiscordWebhook(content, color = 0x0099ff) {
 
   const options = {
     hostname: urlParts.hostname,
-    port: 443,
+    port: urlParts.port || (urlParts.protocol === 'https:' ? 443 : 80),
     path: urlParts.pathname + urlParts.search,
     method: 'POST',
     headers: {
@@ -1056,14 +1126,27 @@ function sendDiscordWebhook(content, color = 0x0099ff) {
     }
   };
 
-  const req = protocol.request(options, (res) => {
-    // Silent success
-  });
+  let req;
+  try {
+    req = protocol.request(options, (res) => {
+      res.resume();
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        reportError('Discord', new Error(`Webhook returned HTTP ${res.statusCode}`), 'discord-webhook');
+      }
+    });
+  } catch (error) {
+    reportError('Discord', error, 'discord-webhook');
+    return;
+  }
+  lastDiscordSend = now;
 
   req.on('error', (e) => {
-    console.log(`[Discord] Error sending webhook: ${e.message}`);
+    reportError('Discord', e, 'discord-webhook');
   });
 
+  req.setTimeout(10000, () => {
+    req.destroy(new Error('Webhook request timed out after 10 seconds'));
+  });
   req.write(payload);
   req.end();
 }
@@ -1073,9 +1156,8 @@ function sendDiscordWebhook(content, color = 0x0099ff) {
 // FIX: guard against uncaughtException stacking reconnects when isReconnecting is already true
 // ============================================================
 process.on('uncaughtException', (err) => {
-  const msg = err.message || 'Unknown';
-  console.log(`[FATAL] Uncaught Exception: ${msg}`);
-  botState.errors.push({ type: 'uncaught', message: msg, time: Date.now() });
+  const msg = formatError(err);
+  reportError('FATAL Uncaught Exception', err, 'uncaught');
 
   const isNetworkError = msg.includes('PartialReadError') || msg.includes('ECONNRESET') ||
     msg.includes('EPIPE') || msg.includes('ETIMEDOUT') || msg.includes('timed out') ||
@@ -1083,6 +1165,9 @@ process.on('uncaughtException', (err) => {
 
   if (isNetworkError) {
     console.log('[FATAL] Known network/protocol error - recovering gracefully...');
+  } else {
+    shutdown(1);
+    return;
   }
 
   if (config.utils['auto-reconnect']) {
@@ -1093,9 +1178,9 @@ process.on('uncaughtException', (err) => {
     if (isReconnecting) {
       console.log('[FATAL] isReconnecting was stuck - resetting before crash recovery');
       isReconnecting = false;
-      if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-        reconnectTimeout = null;
+      if (reconnectTimeoutId) {
+        clearTimeout(reconnectTimeoutId);
+        reconnectTimeoutId = null;
       }
     }
 
@@ -1106,19 +1191,51 @@ process.on('uncaughtException', (err) => {
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.log(`[FATAL] Unhandled Rejection: ${reason}`);
-  botState.errors.push({ type: 'rejection', message: String(reason), time: Date.now() });
+  reportError('FATAL Unhandled Rejection', reason, 'rejection');
+  shutdown(1);
 });
 
 process.on('SIGTERM', () => {
   console.log('[System] SIGTERM received.');
-  process.exit(0);
+  shutdown(0);
 });
 
 process.on('SIGINT', () => {
   console.log('[System] Manual stop requested. Exiting...');
-  process.exit(0);
+  shutdown(0);
 });
+
+let isShuttingDown = false;
+
+function shutdown(exitCode) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  clearBotTimeouts();
+  clearAllIntervals();
+  rl.close();
+
+  if (bot) {
+    try {
+      bot.removeAllListeners();
+      bot.end();
+    } catch (error) {
+      reportError('Shutdown', error);
+      exitCode = 1;
+    }
+  }
+
+  const forceExit = setTimeout(() => process.exit(exitCode), 5000);
+  forceExit.unref();
+
+  server.close((error) => {
+    if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') {
+      reportError('Shutdown', error);
+      process.exit(1);
+    }
+    process.exit(exitCode);
+  });
+}
 
 // ============================================================
 // START THE BOT
