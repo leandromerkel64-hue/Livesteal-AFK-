@@ -4,6 +4,23 @@ const mineflayer = require('mineflayer');
 const { Movements, pathfinder, goals } = require('mineflayer-pathfinder');
 const { GoalBlock } = goals;
 const config = require('./settings.json');
+
+// ============================================================
+// SECRETS - never hardcode credentials in settings.json.
+// Environment variables take precedence over the config file so
+// secrets can be supplied at runtime (e.g. Render env vars) and
+// kept out of source control.
+// ============================================================
+if (process.env.BOT_PASSWORD) {
+  config['bot-account'].password = process.env.BOT_PASSWORD;
+}
+if (process.env.AUTH_PASSWORD && config.utils['auto-auth']) {
+  config.utils['auto-auth'].password = process.env.AUTH_PASSWORD;
+}
+if (process.env.DISCORD_WEBHOOK_URL && config.discord) {
+  config.discord.webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+}
+
 const express = require('express');
 const http = require('http');
 const https = require('https');
@@ -606,7 +623,7 @@ function initializeModules(bot, mcData, defaultMove) {
   console.log('[Modules] Initializing all modules...');
 
   // ---------- AUTO AUTH (REACTIVE) ----------
-  if (config.utils['auto-auth'] && config.utils['auto-auth'].enabled) {
+  if (config.utils['auto-auth'] && config.utils['auto-auth'].enabled && config.utils['auto-auth'].password) {
     const password = config.utils['auto-auth'].password;
     let authHandled = false;
 
@@ -974,8 +991,19 @@ function chatModule(bot) {
           bot.chat(`Hello, ${username}!`);
         }
         if (message.startsWith('!tp ')) {
+          // SECURITY: only allow configured owners to command the bot, and
+          // validate the target is a plain Minecraft username so players
+          // cannot inject selectors (@a/@e) or extra command arguments.
+          const owners = (config.chat && Array.isArray(config.chat.owners)) ? config.chat.owners : [];
           const target = message.split(' ')[1];
-          if (target) bot.chat(`/tp ${target}`);
+          const isValidTarget = target && /^[A-Za-z0-9_]{1,16}$/.test(target);
+          if (!owners.includes(username)) {
+            console.log(`[Chat] Ignoring !tp from non-owner "${username}"`);
+          } else if (!isValidTarget) {
+            console.log(`[Chat] Ignoring !tp with invalid target from "${username}"`);
+          } else {
+            bot.chat(`/tp ${target}`);
+          }
         }
       }
     } catch (e) {
