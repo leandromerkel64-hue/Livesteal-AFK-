@@ -71,7 +71,7 @@ public class KeyService {
         }
 
         // Cooldown erst nach erfolgreicher Vergabe setzen.
-        if (cfg.isCooldownEnabled()) {
+        if (cfg.isCooldownEnabled() && delivered > 0) {
             cooldowns.applyCooldown(initiator.getUniqueId(), cfg.getCooldownSeconds());
         }
 

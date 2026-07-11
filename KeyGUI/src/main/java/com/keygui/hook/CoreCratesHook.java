@@ -10,6 +10,7 @@ import org.bukkit.plugin.Plugin;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -117,7 +118,12 @@ public class CoreCratesHook {
             if (key == null) {
                 return false;
             }
-            player.getInventory().addItem(key);
+            // addItem liefert nicht passende Items zurueck (z. B. volles Inventar).
+            // Diese werden am Standort des Spielers fallen gelassen, damit kein Key verloren geht.
+            Map<Integer, ItemStack> leftover = player.getInventory().addItem(key);
+            for (ItemStack item : leftover.values()) {
+                player.getWorld().dropItemNaturally(player.getLocation(), item);
+            }
             return true;
         } catch (Exception ex) {
             logger.log(Level.WARNING, "Konnte Key der Crate '" + crateId
