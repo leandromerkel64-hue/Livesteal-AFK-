@@ -1,0 +1,76 @@
+# ============================================================
+#  KeyGUI - Konfiguration
+# ============================================================
+# Farbcodes:
+#   - '&' Codes werden unterstuetzt (z. B. &a, &b, &l).
+#   - Hex-Farben werden im Format &#RRGGBB unterstuetzt (z. B. &#FF00AA).
+# Alle Texte unterstuetzen PlaceholderAPI-Platzhalter (z. B. %player_name%),
+# sofern PlaceholderAPI installiert ist.
+# ============================================================
+
+gui:
+  # Titel des GUI (unterstuetzt Farben & Platzhalter).
+  title: "&8» &bCrate Keys &8«"
+
+  # Anzahl der Zeilen des GUI (1-6). Zeilen * 9 = Slots.
+  rows: 6
+
+  # In welchen Slots die Crates angezeigt werden.
+  # Ist die Liste leer, werden die Crates automatisch fortlaufend
+  # (ab Slot 0) platziert.
+  crate-slots: []
+
+  # Fuell-Item fuer leere Slots (Rahmen / Hintergrund).
+  filler:
+    enabled: true
+    material: BLACK_STAINED_GLASS_PANE
+    name: "&7"
+    # Nur diese Slots fuellen. Leer = alle leeren Slots fuellen.
+    slots: []
+
+  # Darstellung der einzelnen Crate-Items im GUI.
+  crate-item:
+    # Material, das pro Crate verwendet wird.
+    #   AUTO  -> nutzt das in CoreCrates konfigurierte Crate-Icon.
+    #   sonst -> ein fester Material-Name (z. B. CHEST, TRIPWIRE_HOOK).
+    material: "AUTO"
+    # Anzeigename des Items. Platzhalter:
+    #   {crate}    -> Anzeigename der Crate
+    #   {crate_id} -> interne ID der Crate
+    name: "&b&l{crate}"
+    # Lore (Beschreibung). Gleiche Platzhalter wie beim Namen.
+    lore:
+      - "&7Crate-ID: &f{crate_id}"
+      - ""
+      - "&eKlicke &7um jedem Online-Spieler"
+      - "&7einen Key dieser Crate zu geben."
+      - ""
+      - "&8» &7Online: &f%server_online%&8/&f%server_max_players%"
+
+sounds:
+  # Sounds sind Bukkit-Sound-Namen. Zum Deaktivieren 'enabled: false' setzen.
+  open:
+    enabled: true
+    sound: BLOCK_CHEST_OPEN
+    volume: 1.0
+    pitch: 1.0
+  give:
+    enabled: true
+    sound: ENTITY_PLAYER_LEVELUP
+    volume: 1.0
+    pitch: 1.2
+  error:
+    enabled: true
+    sound: ENTITY_VILLAGER_NO
+    volume: 1.0
+    pitch: 1.0
+
+cooldown:
+  # Cooldown (in Sekunden) zwischen zwei Key-Vergaben pro Spieler.
+  # 0 deaktiviert den Cooldown.
+  enabled: true
+  seconds: 30
+
+broadcast:
+  # Broadcast an alle Spieler nach erfolgreicher Key-Vergabe.
+  enabled: true

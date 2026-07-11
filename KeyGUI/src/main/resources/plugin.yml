@@ -1,0 +1,30 @@
+name: KeyGUI
+version: '${project.version}'
+main: com.keygui.KeyGUIPlugin
+api-version: '1.21'
+author: KeyGUI
+description: ${project.description}
+website: https://github.com/leandromerkel64-hue/Livesteal-AFK-
+
+# CoreCrates und PlaceholderAPI sind optionale (weiche) Abhaengigkeiten.
+# Das Plugin startet auch, wenn sie fehlen, und gibt eine verstaendliche
+# Konsolenmeldung aus.
+softdepend:
+  - CoreCrates
+  - PlaceholderAPI
+
+commands:
+  keygui:
+    description: Oeffnet das KeyGUI zur Verteilung von Crate-Keys.
+    usage: /keygui
+    aliases: [keys]
+    permission: keygui.use
+    permission-message: '&cDu hast keine Berechtigung fuer diesen Befehl.'
+
+permissions:
+  keygui.use:
+    description: Erlaubt das Oeffnen des KeyGUI und das Verteilen von Keys.
+    default: op
+  keygui.admin:
+    description: Erlaubt Verwaltungsbefehle wie /keygui reload.
+    default: op

@@ -1,0 +1,30 @@
+# ============================================================
+#  KeyGUI - Nachrichten
+# ============================================================
+# Farbcodes '&' sowie Hex-Farben '&#RRGGBB' werden unterstuetzt.
+# Platzhalter:
+#   {prefix} -> das unten definierte Prefix
+#   {crate}  -> Anzeigename der Crate
+#   {amount} -> Anzahl belieferter Spieler
+#   {time}   -> verbleibende Cooldown-Zeit in Sekunden
+# Zusaetzlich werden alle PlaceholderAPI-Platzhalter aufgeloest.
+# ============================================================
+
+prefix: "&8[&bKeyGUI&8] &r"
+
+# Wird beim Verteilen an ALLE Spieler gesendet (Broadcast).
+broadcast: "{prefix}&e{amount} &7Spieler haben je einen &b{crate} &7Key erhalten!"
+
+# Bestaetigung fuer den ausfuehrenden Spieler.
+key-given: "{prefix}&aDu hast allen &e{amount} &aOnline-Spielern einen &b{crate} &aKey gegeben."
+
+# Nachricht an jeden Empfaenger.
+key-received: "{prefix}&aDu hast einen &b{crate} &aKey erhalten!"
+
+# Fehlermeldungen
+no-permission: "{prefix}&cDu hast keine Berechtigung dafuer."
+players-only: "{prefix}&cDieser Befehl kann nur von Spielern genutzt werden."
+corecrates-missing: "{prefix}&cCoreCrates ist nicht installiert. Keys koennen nicht vergeben werden."
+no-crates: "{prefix}&cEs sind keine Crates in CoreCrates konfiguriert."
+crate-not-found: "{prefix}&cDiese Crate existiert nicht mehr."
+cooldown: "{prefix}&cBitte warte noch &e{time}s&c, bevor du erneut Keys verteilst."
